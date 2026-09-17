@@ -4,10 +4,10 @@ import { WebSocketServer } from 'ws';
 import { setupWSConnection } from 'y-websocket/bin/utils';
 
 const dev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
-const hostname = process.env.HOSTNAME || '0.0.0.0';
-const port = parseInt(process.env.PORT || '3000', 10);
+const port = Number(process.env.PORT || 3000);
+const host = '0.0.0.0';
 
-const app = next({ dev, hostname, port });
+const app = next({ dev, hostname: host, port });
 const handle = app.getRequestHandler();
 
 console.log(`[SolarDocs] Preparing Next.js application (mode: ${dev ? 'development' : 'production'})...`);
@@ -75,9 +75,9 @@ app.prepare().then(() => {
   process.on('SIGINT', gracefulShutdown);
   process.on('SIGTERM', gracefulShutdown);
 
-  server.listen(port, hostname, () => {
-    console.log(`[SolarDocs] Unified server listening on http://${hostname}:${port} (mode: ${dev ? 'dev' : 'prod'})`);
-    console.log(`[SolarDocs] Yjs WebSocket collaboration endpoint active at ws://${hostname}:${port}/yjs`);
+  server.listen(port, host, () => {
+    console.log(`[SolarDocs] Unified server listening on http://${host}:${port} (mode: ${dev ? 'dev' : 'prod'})`);
+    console.log(`[SolarDocs] Yjs WebSocket collaboration endpoint active at ws://${host}:${port}/yjs`);
   });
 }).catch((err) => {
   console.error('[SolarDocs] Failed to start server:', err);
