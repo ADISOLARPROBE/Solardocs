@@ -17,7 +17,7 @@ import { StatusFooter } from "./status-footer";
 import { DemoToolsPanel } from "./demo-tools-panel";
 import { SyncStatus } from "@/components/ui/badge";
 import { Collaborator } from "@/components/ui/avatar";
-import { getOrCreateSessionUser, SessionUser } from "@/lib/collaboration-user";
+import { getOrCreateLocalUser, updateLocalUserIdentity, SessionUser } from "@/lib/collaboration-user";
 import {
   SimulatedWebSocket,
   setDemoManualDisconnect,
@@ -27,6 +27,7 @@ import { getCollaborationWebSocketUrl } from "@/lib/collab-config";
 import {
   ensureAnonymousSession,
   syncUserProfile,
+  getProfile,
   getOrCreateDocument,
   updateDocumentTitle,
   updateDocumentShareSetting,
@@ -65,7 +66,7 @@ export function CollaborativeEditor({
     ? "NEXT_PUBLIC_YJS_WEBSOCKET_URL is not configured. Real-time collaboration is unavailable. Your document is saved locally in offline storage."
     : null;
 
-  const [currentUser] = useState<SessionUser>(() => getOrCreateSessionUser());
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     configuredWsUrl ? "syncing" : "offline"
@@ -76,15 +77,7 @@ export function CollaborativeEditor({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [title, setTitle] = useState(initialTitle);
   const [isLinkEditable, setIsLinkEditable] = useState(false);
-  const [collaborators, setCollaborators] = useState<Collaborator[]>(() => [
-    {
-      id: currentUser.id,
-      name: currentUser.name,
-      initials: currentUser.initials,
-      color: currentUser.color,
-      role: "You",
-    },
-  ]);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [isDemoToolsOpen, setIsDemoToolsOpen] = useState(false);
   const [isDemoConnected, setIsDemoConnected] = useState(true);
   // Force update tick for active toolbar states
@@ -115,6 +108,8 @@ export function CollaborativeEditor({
 
   // Background non-blocking Supabase anonymous auth & metadata synchronization
   useEffect(() => {
+    if (!currentUser) return;
+    const sessionUser = currentUser;
     let isMounted = true;
 
     async function syncSupabase() {
@@ -122,8 +117,37 @@ export function CollaborativeEditor({
         const user = await ensureAnonymousSession();
         if (!user || !isMounted) return;
 
+        let activeUser = sessionUser;
+
+        // If user is authenticated with a named account, sync their real name into collaboration presence
+        if (!user.is_anonymous) {
+          const profile = await getProfile(user.id);
+          const realName =
+            profile?.display_name ||
+            user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            user.email?.split("@")[0];
+
+          if (realName && realName !== sessionUser.name) {
+            const updated = updateLocalUserIdentity(realName, profile?.avatar_color);
+            activeUser = updated;
+            if (isMounted) {
+              setCurrentUser(updated);
+            }
+            if (providerRef.current) {
+              providerRef.current.awareness.setLocalStateField("user", {
+                id: updated.id,
+                name: updated.name,
+                color: updated.color,
+                initials: updated.initials,
+                role: "Editor",
+              });
+            }
+          }
+        }
+
         // Sync visitor's profile using the exact display name and color used for Yjs presence
-        await syncUserProfile(user, currentUser);
+        await syncUserProfile(user, activeUser);
 
         // Fetch or create document metadata row
         const docMeta = await getOrCreateDocument(documentId, initialTitle, user.id);
@@ -171,8 +195,18 @@ export function CollaborativeEditor({
   };
 
   useEffect(() => {
-    // 1. Session user identity
-    const sessionUser = currentUser;
+    // 1. Session user identity: read or generate from localStorage only post-mount
+    const sessionUser = getOrCreateLocalUser();
+    setCurrentUser(sessionUser);
+    setCollaborators([
+      {
+        id: sessionUser.id,
+        name: sessionUser.name,
+        initials: sessionUser.initials,
+        color: sessionUser.color,
+        role: "You",
+      },
+    ]);
 
     // 2. Create Yjs document
     const ydoc = new Y.Doc();
@@ -490,7 +524,7 @@ export function CollaborativeEditor({
       idbRef.current = null;
       setEditor(null);
     };
-  }, [documentId, currentUser, configuredWsUrl]);
+  }, [documentId, configuredWsUrl]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -577,7 +611,7 @@ export function CollaborativeEditor({
           onClose={() => setIsSidebarOpen(false)}
           documentId={documentId}
           collaborators={collaborators}
-          currentUserId={currentUser.id}
+          currentUserId={currentUser?.id}
         />
       </div>
 

@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   SunMedium,
   ArrowLeft,
@@ -9,13 +10,27 @@ import {
   Wifi,
   Keyboard,
   Check,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getCollaborationWebSocketUrl } from "@/lib/collab-config";
+import { getOrCreateLocalUser, SessionUser } from "@/lib/collaboration-user";
+import { signOutUser } from "@/lib/supabase";
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"general" | "collaboration" | "shortcuts">("general");
   const [saved, setSaved] = useState(false);
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
+
+  useEffect(() => {
+    setCurrentUser(getOrCreateLocalUser());
+  }, []);
+
+  const handleSignOut = async () => {
+    await signOutUser();
+    router.push("/login");
+  };
 
   const handleSave = () => {
     setSaved(true);
@@ -123,6 +138,22 @@ export default function SettingsPage() {
                     readOnly
                     className="w-full text-xs px-3 py-2 border border-slate-200 rounded-md bg-slate-50 text-slate-500 cursor-not-allowed"
                   />
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-900">Session & Sign Out</h4>
+                    <p className="text-[11px] text-slate-400">Sign out of your active workspace session and return to login</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSignOut}
+                    className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 gap-1.5"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sign Out</span>
+                  </Button>
                 </div>
               </div>
             </div>

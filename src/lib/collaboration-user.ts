@@ -46,14 +46,21 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+const STORAGE_KEY = "solardocs_collaborator_user";
+const LEGACY_STORAGE_KEY = "solardocs_session_user";
+
 /**
- * Returns a temporary session user.
- * Persists strictly within the browser tab's sessionStorage (temporary only, no database).
+ * Returns a stable local collaborator identity from localStorage, or creates a new
+ * persistent identity if one does not exist.
+ *
+ * NOTE: Must ONLY be called on the client after mount (e.g. inside useEffect)
+ * to avoid hydration mismatches between server and client markup.
  */
-export function getOrCreateSessionUser(): SessionUser {
+export function getOrCreateLocalUser(): SessionUser {
   if (typeof window === "undefined") {
+    // Deterministic fallback for non-browser environments; never generate random values on SSR
     return {
-      id: "server-session",
+      id: "anonymous",
       name: "Anonymous",
       color: "#4F46E5",
       initials: "AN",
@@ -61,20 +68,28 @@ export function getOrCreateSessionUser(): SessionUser {
     };
   }
 
-  const STORAGE_KEY = "solardocs_session_user";
   try {
-    const cached = window.sessionStorage.getItem(STORAGE_KEY);
+    const cached =
+      window.localStorage.getItem(STORAGE_KEY) ||
+      window.localStorage.getItem(LEGACY_STORAGE_KEY) ||
+      window.sessionStorage.getItem(LEGACY_STORAGE_KEY);
     if (cached) {
       const parsed = JSON.parse(cached) as SessionUser;
-      if (parsed.name && parsed.color && parsed.initials) {
+      if (parsed.name && parsed.color && parsed.initials && parsed.id) {
+        // Ensure migrated or cached identity is saved under the active localStorage key
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        } catch {
+          // Ignore storage write failure
+        }
         return parsed;
       }
     }
   } catch {
-    // sessionStorage unavailable or restricted
+    // localStorage unavailable or restricted
   }
 
-  // Generate a random realistic identity
+  // Generate a random realistic identity for this user
   const nameIndex = Math.floor(Math.random() * REALISTIC_NAMES.length);
   const colorIndex = Math.floor(Math.random() * COLLAB_COLORS.length);
   const name = REALISTIC_NAMES[nameIndex];
@@ -91,10 +106,57 @@ export function getOrCreateSessionUser(): SessionUser {
   };
 
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(newUser));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(newUser));
   } catch {
     // Ignore storage write failure
   }
 
   return newUser;
 }
+
+/**
+ * Alias for getOrCreateLocalUser for backward compatibility.
+ */
+export function getOrCreateSessionUser(): SessionUser {
+  return getOrCreateLocalUser();
+}
+
+/**
+ * Updates the stored local collaborator identity with an authenticated user's real name and avatar color.
+ */
+export function updateLocalUserIdentity(name: string, color?: string): SessionUser {
+  const current = getOrCreateLocalUser();
+  const trimmed = name.trim();
+  const updated: SessionUser = {
+    ...current,
+    name: trimmed || current.name,
+    initials: trimmed ? getInitials(trimmed) : current.initials,
+    color: color || current.color,
+  };
+
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    }
+  } catch {
+    // Ignore storage write failure
+  }
+
+  return updated;
+}
+
+/**
+ * Clears the stored user identity upon sign out.
+ */
+export function clearLocalUser(): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage write failure
+  }
+}
+
+

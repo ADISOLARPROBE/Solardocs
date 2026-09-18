@@ -41,7 +41,7 @@ export function Avatar({
 }
 
 export function AvatarStack({
-  collaborators = SAMPLE_COLLABORATORS,
+  collaborators = [],
   max = 3,
   size = "md",
 }: {
@@ -49,6 +49,10 @@ export function AvatarStack({
   max?: number;
   size?: "sm" | "md" | "lg";
 }) {
+  if (!collaborators || collaborators.length === 0) {
+    return null;
+  }
+
   const visible = collaborators.slice(0, max);
   const remaining = collaborators.length - max;
 

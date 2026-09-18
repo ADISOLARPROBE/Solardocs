@@ -17,15 +17,19 @@ import {
   RefreshCw,
   X,
   Share2,
+  LogIn,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AvatarStack, Collaborator } from "@/components/ui/avatar";
-import { getOrCreateSessionUser, SessionUser } from "@/lib/collaboration-user";
+import { getOrCreateLocalUser, updateLocalUserIdentity, SessionUser } from "@/lib/collaboration-user";
 import {
   ensureAnonymousSession,
   syncUserProfile,
   getUserDocuments,
   createDocument,
+  getProfile,
+  signOutUser,
   type DocumentWithMembers,
 } from "@/lib/supabase";
 
@@ -46,8 +50,15 @@ function formatRelativeTime(dateStr: string): string {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [currentUser] = useState<SessionUser>(() => getOrCreateSessionUser());
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentWithMembers[]>([]);
+
+  useEffect(() => {
+    const user = getOrCreateLocalUser();
+    setCurrentUser(user);
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -55,6 +66,8 @@ export default function DashboardPage() {
   const [activeFilter, setActiveFilter] = useState<"all" | "recent" | "owned" | "shared">("all");
 
   useEffect(() => {
+    if (!currentUser) return;
+    const sessionUser = currentUser;
     let isMounted = true;
 
     async function fetchDocs() {
@@ -62,7 +75,29 @@ export default function DashboardPage() {
         const authUser = await ensureAnonymousSession();
         if (!isMounted) return;
         if (authUser) {
-          await syncUserProfile(authUser, currentUser);
+          const isAuthed = !authUser.is_anonymous;
+          setIsAuthenticated(isAuthed);
+          setUserEmail(authUser.email || null);
+
+          let activeUser = sessionUser;
+          if (isAuthed) {
+            const profile = await getProfile(authUser.id);
+            const realName =
+              profile?.display_name ||
+              authUser.user_metadata?.full_name ||
+              authUser.user_metadata?.name ||
+              authUser.email?.split("@")[0];
+
+            if (realName && realName !== sessionUser.name) {
+              const updated = updateLocalUserIdentity(realName, profile?.avatar_color);
+              activeUser = updated;
+              if (isMounted) {
+                setCurrentUser(updated);
+              }
+            }
+          }
+
+          await syncUserProfile(authUser, activeUser);
           const userDocs = await getUserDocuments(authUser.id);
           if (isMounted) {
             setDocuments(userDocs);
@@ -92,12 +127,14 @@ export default function DashboardPage() {
   }, [currentUser]);
 
   const handleRetry = () => {
+    if (!currentUser) return;
+    const sessionUser = currentUser;
     setIsLoading(true);
     setErrorMessage(null);
     ensureAnonymousSession()
       .then(async (authUser) => {
         if (authUser) {
-          await syncUserProfile(authUser, currentUser);
+          await syncUserProfile(authUser, sessionUser);
           const userDocs = await getUserDocuments(authUser.id);
           setDocuments(userDocs);
         }
@@ -111,11 +148,16 @@ export default function DashboardPage() {
       });
   };
 
+  const handleSignOut = async () => {
+    await signOutUser();
+    router.push("/login");
+  };
+
   const handleCreateDocument = async () => {
     setIsCreating(true);
     try {
       const authUser = await ensureAnonymousSession();
-      const ownerId = authUser?.id || currentUser.id;
+      const ownerId = authUser?.id || currentUser?.id || "anonymous";
       const newDoc = await createDocument(ownerId, "Untitled document");
       if (newDoc?.id) {
         router.push(`/editor/${newDoc.id}`);
@@ -166,7 +208,31 @@ export default function DashboardPage() {
           <span className="text-xs font-medium text-slate-500">Workspace</span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {isAuthenticated ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSignOut}
+              className="gap-1.5 text-xs text-slate-600 hover:text-slate-900"
+              title="Sign out of SolarDocs"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign out</span>
+            </Button>
+          ) : (
+            <Link href="/login">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs text-slate-600 hover:text-slate-900"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sign in</span>
+              </Button>
+            </Link>
+          )}
+
           <Button
             variant="primary"
             size="sm"
@@ -185,20 +251,56 @@ export default function DashboardPage() {
         {/* Left Sidebar: Compact Navigation */}
         <aside className="w-full md:w-52 shrink-0 space-y-5 select-none">
           {/* Active Visitor Profile Badge */}
-          <div className="bg-white border border-slate-200/80 rounded-lg p-3 flex items-center gap-2.5 shadow-2xs">
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0 shadow-2xs"
-              style={{ backgroundColor: currentUser.color }}
-            >
-              {currentUser.initials}
+          <div className="bg-white border border-slate-200/80 rounded-lg p-3 shadow-2xs space-y-2.5">
+            <div className="flex items-center gap-2.5">
+              {currentUser ? (
+                <>
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0 shadow-2xs"
+                    style={{ backgroundColor: currentUser.color }}
+                  >
+                    {currentUser.initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-slate-900 truncate">
+                      {currentUser.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      {isAuthenticated ? (userEmail || "Signed In") : "Guest Session"}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 shrink-0" />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="w-20 h-3 bg-slate-100 rounded" />
+                    <div className="w-14 h-2 bg-slate-100 rounded" />
+                  </div>
+                </>
+              )}
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-medium text-slate-900 truncate">
-                {currentUser.name}
-              </div>
-              <div className="text-[10px] text-slate-400 truncate">
-                Anonymous Session
-              </div>
+
+            {/* Account Quick Action */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              {isAuthenticated ? (
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="text-slate-500 hover:text-rose-600 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>Sign out</span>
+                </button>
+              ) : (
+                <Link
+                  href="/login"
+                  className="text-indigo-600 hover:text-indigo-700 flex items-center gap-1 font-medium transition-colors"
+                >
+                  <LogIn className="w-3 h-3" />
+                  <span>Sign in</span>
+                </Link>
+              )}
             </div>
           </div>
 

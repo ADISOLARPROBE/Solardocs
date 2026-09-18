@@ -113,8 +113,15 @@ export function EditorTopBar({
         </div>
 
         {/* Collaborators Avatar Stack - visible on all screen sizes */}
-        <div className="flex items-center">
-          <AvatarStack collaborators={collaborators} max={2} size="sm" />
+        <div className="flex items-center min-w-[24px]">
+          {collaborators.length > 0 ? (
+            <AvatarStack collaborators={collaborators} max={2} size="sm" />
+          ) : (
+            <div
+              className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200/80 shrink-0"
+              aria-label="Loading collaborators"
+            />
+          )}
         </div>
 
         {/* Toggle People Sidebar Button */}
